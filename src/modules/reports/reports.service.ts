@@ -1,0 +1,555 @@
+import { Injectable } from '@nestjs/common';
+import {
+  CashMovementType,
+  InventoryMovementType,
+  SaleItemType,
+  SaleStatus,
+} from '@prisma/client';
+import { PrismaService } from 'src/prisma/prisma.service';
+import { ReportQueryDto } from './dto/report-query.dto';
+
+@Injectable()
+export class ReportsService {
+  constructor(private readonly prisma: PrismaService) {}
+
+  async cashSummary(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const where = query.cashShiftId
+      ? { id: query.cashShiftId }
+      : {
+          openedAt: { gte: start, lte: end },
+          ...(query.userId ? { openedById: query.userId } : {}),
+        };
+    const shifts = await this.prisma.cashShift.findMany({
+      where,
+      include: {
+        openedBy: { include: { employee: true } },
+        closedBy: { include: { employee: true } },
+        cashMovements: true,
+        sales: true,
+        closure: {
+          include: {
+            details: true,
+            settledBy: { include: { employee: true } },
+          },
+        },
+      },
+      orderBy: { openedAt: 'desc' },
+    });
+
+    const movements = shifts.flatMap((shift) => shift.cashMovements);
+    const sales = shifts.flatMap((shift) => shift.sales);
+    const closures = shifts.flatMap((shift) =>
+      shift.closure ? [{ ...shift.closure, shift }] : [],
+    );
+
+    return {
+      range: { from: start, to: end },
+      shifts: shifts.length,
+      salesCount: sales.length,
+      paidSalesCount: sales.filter((sale) => sale.status === SaleStatus.PAID).length,
+      pendingSalesCount: sales.filter((sale) => sale.status === SaleStatus.OPEN).length,
+      openingAmount: this.sum(shifts.map((shift) => Number(shift.openingAmount))),
+      incomeTotal: this.sum(
+        movements
+          .filter((movement) => movement.type === CashMovementType.INCOME)
+          .map((movement) => Number(movement.amount)),
+      ),
+      expenseTotal: this.sum(
+        movements
+          .filter((movement) => movement.type === CashMovementType.EXPENSE)
+          .map((movement) => Number(movement.amount)),
+      ),
+      expectedTotal: this.sum(closures.map((closure) => Number(closure.totalExpected))),
+      countedTotal: this.sum(closures.map((closure) => Number(closure.totalCounted))),
+      differenceTotal: this.sum(closures.map((closure) => Number(closure.difference))),
+      // Cuadres pendientes: cierres con diferencia != 0 que aún no fueron cuadrados.
+      unsettledCount: closures.filter(
+        (closure) => Number(closure.difference) !== 0 && !closure.settled,
+      ).length,
+      unsettledTotal: this.sum(
+        closures
+          .filter((closure) => Number(closure.difference) !== 0 && !closure.settled)
+          .map((closure) => Number(closure.difference)),
+      ),
+      closures: closures.map((closure) => ({
+        id: closure.id,
+        cashShiftId: closure.cashShiftId,
+        openedBy: closure.shift.openedBy.employee?.fullName ?? closure.shift.openedBy.username,
+        closedBy: closure.shift.closedBy?.employee?.fullName ?? closure.shift.closedBy?.username,
+        totalExpected: Number(closure.totalExpected),
+        totalCounted: Number(closure.totalCounted),
+        difference: Number(closure.difference),
+        createdAt: closure.createdAt,
+        settled: closure.settled,
+        settledAt: closure.settledAt,
+        settledBy: closure.settledBy?.employee?.fullName ?? closure.settledBy?.username,
+        settleReason: closure.settleReason,
+      })),
+    };
+  }
+
+  async salesSummary(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const sales = await this.prisma.sale.findMany({
+      where: this.saleWhere(query, start, end),
+      include: { payments: true, user: { include: { employee: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const payments = sales.flatMap((sale) => sale.payments);
+
+    return {
+      range: { from: start, to: end },
+      count: sales.length,
+      total: this.sum(sales.map((sale) => Number(sale.total))),
+      paidTotal: this.sum(
+        sales
+          .filter((sale) => sale.status === SaleStatus.PAID)
+          .map((sale) => Number(sale.total)),
+      ),
+      pendingTotal: this.sum(
+        sales
+          .filter((sale) => sale.status === SaleStatus.OPEN)
+          .map((sale) => Number(sale.total)),
+      ),
+      byStatus: this.groupSum(sales, 'status', 'total'),
+      byPaymentMethod: this.groupSum(payments, 'paymentMethod', 'amount'),
+      byUser: this.groupSum(
+        sales.map((sale) => ({
+          ...sale,
+          userName: sale.user.employee?.fullName ?? sale.user.username,
+        })),
+        'userName',
+        'total',
+      ),
+    };
+  }
+
+  async salesByItemType(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const details = await this.prisma.saleDetail.findMany({
+      where: { sale: this.saleWhere(query, start, end) },
+      include: { sale: true },
+    });
+
+    return {
+      range: { from: start, to: end },
+      rows: Object.values(
+        details.reduce<Record<string, any>>((acc, detail) => {
+          const key = detail.itemType;
+          acc[key] ??= { itemType: key, quantity: 0, total: 0 };
+          acc[key].quantity += Number(detail.quantity);
+          acc[key].total += Number(detail.subtotal);
+          acc[key].total = Number(acc[key].total.toFixed(2));
+          return acc;
+        }, {}),
+      ),
+    };
+  }
+
+  async productSales(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const details = await this.prisma.saleDetail.findMany({
+      where: {
+        itemType: SaleItemType.PRODUCT,
+        sale: this.saleWhere(query, start, end),
+      },
+      include: { product: true },
+    });
+
+    return {
+      range: { from: start, to: end },
+      rows: Object.values(
+        details.reduce<Record<string, any>>((acc, detail) => {
+          const key = String(detail.productId);
+          acc[key] ??= {
+            productId: detail.productId,
+            product: detail.product?.name ?? 'Producto',
+            quantity: 0,
+            total: 0,
+            stock: detail.product?.stock ?? 0,
+          };
+          acc[key].quantity += Number(detail.quantity);
+          acc[key].total += Number(detail.subtotal);
+          acc[key].total = Number(acc[key].total.toFixed(2));
+          return acc;
+        }, {}),
+      ).sort((a: any, b: any) => b.total - a.total),
+    };
+  }
+
+  /**
+   * Reporte unificado de ventas e ingresos.
+   * Fusiona totales + desglose por tipo de ítem + anulaciones + ingresos por tipo de habitación.
+   */
+  async salesFull(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const saleWhere = this.saleWhere(query, start, end);
+
+    const [sales, details, cancelled] = await Promise.all([
+      this.prisma.sale.findMany({
+        where: saleWhere,
+        include: { payments: true, user: { include: { employee: true } } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.saleDetail.findMany({
+        where: { sale: saleWhere },
+        include: {
+          sale: { select: { status: true } },
+          product: true,
+          stay: { include: { room: { include: { roomType: true } } } },
+        },
+      }),
+      this.prisma.sale.findMany({
+        where: { ...saleWhere, status: SaleStatus.CANCELLED },
+        include: { user: { include: { employee: true } } },
+        orderBy: { cancelledAt: 'desc' },
+      }),
+    ]);
+
+    const payments = sales.flatMap((sale) => sale.payments);
+
+    // Totales por estado.
+    const byStatus = {
+      PAID: this.sum(
+        sales.filter((s) => s.status === SaleStatus.PAID).map((s) => Number(s.total)),
+      ),
+      OPEN: this.sum(
+        sales.filter((s) => s.status === SaleStatus.OPEN).map((s) => Number(s.total)),
+      ),
+      CANCELLED: this.sum(
+        sales.filter((s) => s.status === SaleStatus.CANCELLED).map((s) => Number(s.total)),
+      ),
+    };
+
+    // Desglose por tipo de ítem (ROOM_RENT, PRODUCT, PENALTY, OTHER).
+    const byItemType = Object.values(
+      details.reduce<Record<string, any>>((acc, detail) => {
+        const key = detail.itemType;
+        acc[key] ??= { itemType: key, quantity: 0, total: 0 };
+        acc[key].quantity += Number(detail.quantity);
+        acc[key].total = Number((acc[key].total + Number(detail.subtotal)).toFixed(2));
+        return acc;
+      }, {}),
+    );
+
+    // Ingresos por tipo de habitación (solo ROOM_RENT, cruce con stay.room.roomType).
+    const incomeByRoomType = Object.values(
+      details
+        .filter((detail) => detail.itemType === SaleItemType.ROOM_RENT && detail.stay)
+        .reduce<Record<string, any>>((acc, detail) => {
+          const roomTypeName = detail.stay?.room?.roomType?.name ?? 'Sin tipo';
+          acc[roomTypeName] ??= { roomType: roomTypeName, count: 0, total: 0 };
+          acc[roomTypeName].count += 1;
+          acc[roomTypeName].total = Number(
+            (acc[roomTypeName].total + Number(detail.subtotal)).toFixed(2),
+          );
+          return acc;
+        }, {}),
+    ).sort((a: any, b: any) => b.total - a.total);
+
+    return {
+      range: { from: start, to: end },
+      summary: {
+        count: sales.length,
+        total: this.sum(sales.map((sale) => Number(sale.total))),
+        paid: byStatus.PAID,
+        pending: byStatus.OPEN,
+        cancelled: byStatus.CANCELLED,
+      },
+      byItemType,
+      byPaymentMethod: this.groupSum(payments, 'paymentMethod', 'amount'),
+      byStatus: this.groupSum(sales, 'status', 'total'),
+      incomeByRoomType,
+      cancellations: cancelled.map((sale) => ({
+        id: sale.id,
+        total: Number(sale.total),
+        reason: sale.cancelReason,
+        cancelledAt: sale.cancelledAt,
+        cancelledBy:
+          sale.user?.employee?.fullName ?? sale.user?.username ?? '-',
+      })),
+    };
+  }
+
+  async occupancy(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const [rooms, stays] = await Promise.all([
+      this.prisma.room.findMany({
+        where: { active: true },
+        include: { roomType: true },
+      }),
+      this.prisma.stay.findMany({
+        where: {
+          checkIn: { lte: end },
+          OR: [{ checkOut: null }, { checkOut: { gte: start } }],
+        },
+        include: { room: { include: { roomType: true } }, priceType: true },
+      }),
+    ]);
+    const occupiedRoomIds = new Set(stays.map((stay) => stay.roomId));
+    const closed = stays.filter((stay) => stay.checkOut);
+
+    return {
+      range: { from: start, to: end },
+      totalRooms: rooms.length,
+      occupiedRoomsInRange: occupiedRoomIds.size,
+      occupancyPercent: rooms.length
+        ? Number(((occupiedRoomIds.size / rooms.length) * 100).toFixed(2))
+        : 0,
+      activeStays: stays.filter((stay) => !stay.checkOut).length,
+      closedStays: closed.length,
+      averageHours: closed.length
+        ? Number(
+            (
+              closed.reduce(
+                (sum, stay) =>
+                  sum +
+                  ((stay.checkOut?.getTime() ?? 0) - stay.checkIn.getTime()) /
+                    36e5,
+                0,
+              ) / closed.length
+            ).toFixed(2),
+          )
+        : 0,
+      byRoomType: this.countBy(stays, (stay: any) => stay.room.roomType.name),
+      currentRoomStatus: this.countBy(rooms, (room: any) => room.status),
+    };
+  }
+
+  async inventory(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const [products, movements] = await Promise.all([
+      this.prisma.product.findMany({
+        where: { active: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.inventoryMovement.findMany({
+        where: {
+          createdAt: { gte: start, lte: end },
+          ...(query.type ? { type: query.type } : {}),
+        },
+        include: { product: true, user: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    const losses = movements.filter(
+      (movement) => movement.type === InventoryMovementType.LOSS,
+    );
+
+    return {
+      range: { from: start, to: end },
+      lowStock: products
+        .filter((product) => product.stock <= product.minStock)
+        .map((product) => ({
+          id: product.id,
+          name: product.name,
+          stock: product.stock,
+          minStock: product.minStock,
+        })),
+      movementsByType: this.countBy(movements, (movement: any) => movement.type),
+      lossCount: losses.length,
+      lossTotal: this.sum(
+        losses.map(
+          (loss) => Number(loss.quantity) * Number(loss.product.purchasePrice),
+        ),
+      ),
+      movements: movements.map((movement) => ({
+        id: movement.id,
+        product: movement.product.name,
+        type: movement.type,
+        quantity: movement.quantity,
+        reason: movement.reason,
+        createdAt: movement.createdAt,
+      })),
+    };
+  }
+
+  async staff(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const [payments, advances, discounts, pendingPenalties, attendances] =
+      await Promise.all([
+        this.prisma.staffPayment.findMany({
+          where: { createdAt: { gte: start, lte: end } },
+          include: { employee: true },
+        }),
+        this.prisma.staffAdvance.findMany({
+          where: { createdAt: { gte: start, lte: end } },
+          include: { employee: true },
+        }),
+        this.prisma.staffDiscount.findMany({
+          where: { createdAt: { gte: start, lte: end } },
+          include: { employee: true },
+        }),
+        // Penalidades pendientes (no dependen del rango: son el saldo actual).
+        this.prisma.penalty.findMany({
+          where: { status: 'PENDING' },
+          include: { employee: true },
+        }),
+        // Asistencia del rango para cruce con pagos.
+        this.prisma.attendance.findMany({
+          where: { date: { gte: start, lte: end } },
+          include: { employee: true },
+        }),
+      ]);
+
+    // Penalidades pendientes sumadas por empleado.
+    const pendingPenaltiesByEmployee = Object.values(
+      pendingPenalties.reduce<Record<string, any>>((acc, penalty) => {
+        const key = String(penalty.employeeId);
+        acc[key] ??= {
+          employeeId: penalty.employeeId,
+          employee: penalty.employee.fullName,
+          pendingPenalties: 0,
+          count: 0,
+        };
+        acc[key].pendingPenalties = Number(
+          (acc[key].pendingPenalties + Number(penalty.amount)).toFixed(2),
+        );
+        acc[key].count += 1;
+        return acc;
+      }, {}),
+    );
+
+    // Asistencia resumida por empleado en el rango.
+    const attendanceSummaryByEmployee = Object.values(
+      attendances.reduce<Record<string, any>>((acc, attendance) => {
+        const key = String(attendance.employeeId);
+        acc[key] ??= {
+          employeeId: attendance.employeeId,
+          employee: attendance.employee.fullName,
+          days: 0,
+          present: 0,
+          late: 0,
+          absent: 0,
+        };
+        acc[key].days += 1;
+        if (attendance.status === 'PRESENT') acc[key].present += 1;
+        else if (attendance.status === 'LATE') acc[key].late += 1;
+        else if (attendance.status === 'ABSENT') acc[key].absent += 1;
+        return acc;
+      }, {}),
+    );
+
+    // Mapas auxiliares para enriquecer byEmployee.
+    const pendingMap = new Map(
+      pendingPenaltiesByEmployee.map((row: any) => [String(row.employeeId), row]),
+    );
+    const attendanceMap = new Map(
+      attendanceSummaryByEmployee.map((row: any) => [String(row.employeeId), row]),
+    );
+
+    const byEmployee = Object.values(
+      [...payments, ...advances, ...discounts].reduce<Record<string, any>>(
+        (acc, row: any) => {
+          const key = String(row.employeeId);
+          acc[key] ??= {
+            employeeId: row.employeeId,
+            employee: row.employee.fullName,
+            gross: 0,
+            penaltiesApplied: 0,
+            net: 0,
+            advances: 0,
+            discounts: 0,
+            pendingPenalties: pendingMap.get(key)?.pendingPenalties ?? 0,
+            attendanceDays: attendanceMap.get(key)?.days ?? 0,
+          };
+          if ('paidById' in row) {
+            // StaffPayment: tiene grossAmount/penaltyAmount/amount.
+            acc[key].gross += Number(row.grossAmount ?? row.amount);
+            acc[key].penaltiesApplied += Number(row.penaltyAmount ?? 0);
+            acc[key].net += Number(row.amount);
+          } else if ('requestedById' in row) {
+            acc[key].advances += Number(row.amount);
+          } else {
+            acc[key].discounts += Number(row.amount);
+          }
+          return acc;
+        },
+        {},
+      ),
+    );
+
+    return {
+      range: { from: start, to: end },
+      paymentsTotal: this.sum(payments.map((row) => Number(row.amount))),
+      paymentsGrossTotal: this.sum(
+        payments.map((row) => Number(row.grossAmount ?? row.amount)),
+      ),
+      advancesTotal: this.sum(advances.map((row) => Number(row.amount))),
+      discountsTotal: this.sum(discounts.map((row) => Number(row.amount))),
+      penaltiesAppliedTotal: this.sum(
+        payments.map((row) => Number(row.penaltyAmount ?? 0)),
+      ),
+      pendingPenaltiesTotal: this.sum(
+        pendingPenaltiesByEmployee.map((row: any) => Number(row.pendingPenalties)),
+      ),
+      byEmployee,
+      pendingPenaltiesByEmployee,
+      attendanceSummaryByEmployee,
+    };
+  }
+
+  async audit(query: ReportQueryDto) {
+    const { start, end } = this.range(query);
+    const logs = await this.prisma.auditLog.findMany({
+      where: { createdAt: { gte: start, lte: end } },
+      include: { user: true },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+    });
+
+    return {
+      range: { from: start, to: end },
+      count: logs.length,
+      byAction: this.countBy(logs, (log: any) => log.action),
+      byEntity: this.countBy(logs, (log: any) => log.entity),
+      logs: logs.map((log) => ({
+        id: log.id,
+        action: log.action,
+        entity: log.entity,
+        entityId: log.entityId,
+        user: log.user?.username ?? 'Sistema',
+        createdAt: log.createdAt,
+      })),
+    };
+  }
+
+  private saleWhere(query: ReportQueryDto, start: Date, end: Date) {
+    return {
+      createdAt: { gte: start, lte: end },
+      ...(query.cashShiftId ? { cashShiftId: query.cashShiftId } : {}),
+      ...(query.userId ? { userId: query.userId } : {}),
+      ...(query.status ? { status: query.status } : {}),
+    };
+  }
+
+  private range(query: ReportQueryDto) {
+    const now = new Date();
+    const start = query.from
+      ? new Date(`${query.from}T00:00:00`)
+      : new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = query.to ? new Date(`${query.to}T23:59:59.999`) : now;
+    return { start, end };
+  }
+
+  private groupSum(rows: any[], key: string, amountKey: string) {
+    return rows.reduce<Record<string, number>>((acc, row) => {
+      const group = String(row[key] ?? 'UNKNOWN');
+      acc[group] = Number(((acc[group] ?? 0) + Number(row[amountKey])).toFixed(2));
+      return acc;
+    }, {});
+  }
+
+  private countBy(rows: any[], key: (row: any) => string) {
+    return rows.reduce<Record<string, number>>((acc, row) => {
+      const group = key(row) ?? 'UNKNOWN';
+      acc[group] = (acc[group] ?? 0) + 1;
+      return acc;
+    }, {});
+  }
+
+  private sum(values: number[]) {
+    return Number(values.reduce((total, value) => total + Number(value), 0).toFixed(2));
+  }
+}

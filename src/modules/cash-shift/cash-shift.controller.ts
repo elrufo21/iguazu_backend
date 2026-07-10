@@ -1,0 +1,44 @@
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { CurrentUser } from 'src/common/decorators/current-user.decorator';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { CashShiftService } from './cash-shift.service';
+import { OpenCashShiftDto } from './dto/create-cash-shift.dto';
+
+@UseGuards(JwtAuthGuard)
+@Controller('cash-shift')
+export class CashShiftController {
+  constructor(private readonly cashShiftService: CashShiftService) {}
+
+  @Post('open')
+  open(@Body() dto: OpenCashShiftDto, @CurrentUser() user: any) {
+    return this.cashShiftService.open(dto, user.sub);
+  }
+
+  @Get('open')
+  getOpenShift(@CurrentUser() user: any) {
+    return this.cashShiftService.getOpenShift(user.sub);
+  }
+
+  @Post('close')
+  close(@CurrentUser() user: any) {
+    return this.cashShiftService.close(user.sub);
+  }
+
+  @Get('history')
+  history() {
+    return this.cashShiftService.history();
+  }
+
+  @Get(':id')
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.cashShiftService.findOne(id);
+  }
+}

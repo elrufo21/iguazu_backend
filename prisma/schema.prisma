@@ -1,0 +1,704 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  ADMIN
+  RECEPTIONIST
+  CASHIER
+}
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  OUT_OF_SERVICE
+}
+
+enum ReservationStatus {
+  PENDING
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+  NO_SHOW
+}
+
+enum StayStatus {
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+enum InventoryMovementType {
+  IN
+  OUT
+  ADJUSTMENT
+  LOSS
+}
+
+enum SaleStatus {
+  OPEN
+  PAID
+  CANCELLED
+}
+
+enum SaleItemType {
+  PRODUCT
+  ROOM_RENT
+  PENALTY
+  OTHER
+}
+
+enum CashShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  INCOME
+  EXPENSE
+}
+
+enum CashMovementCategory {
+  ROOM_RENT
+  PRODUCT_SALE
+  STAFF_PAYMENT
+  STAFF_ADVANCE
+  PRODUCT_LOSS_CHARGE
+  INVENTORY_PURCHASE
+  CASH_WITHDRAWAL
+  CASH_ADJUSTMENT
+  RESERVATION_DEPOSIT
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  YAPE
+  PLIN
+  TRANSFER
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+  JUSTIFIED
+}
+
+enum InvoiceStatus {
+  PENDING
+  ACCEPTED
+  OBSERVED
+  REJECTED
+  CANCELED
+}
+
+// ============================================================
+// USUARIOS Y PERSONAL
+// ============================================================
+
+model User {
+  id           Int       @id @default(autoincrement())
+  employeeId   Int?      @unique
+  employee     Employee? @relation(fields: [employeeId], references: [id])
+  username     String    @unique
+  passwordHash String
+  role         UserRole
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relaciones inversas (autoría de acciones)
+  createdReservations Reservation[]       @relation("ReservationCreatedBy")
+  createdStays        Stay[]              @relation("StayCreatedBy")
+  inventoryMovements  InventoryMovement[]
+  sales               Sale[]
+  cancelledSales      Sale[]              @relation("SaleCancelledBy")
+  openedCashShifts    CashShift[]         @relation("CashShiftOpenedBy")
+  closedCashShifts    CashShift[]         @relation("CashShiftClosedBy")
+  cashMovements       CashMovement[]
+  requestedAdvances   StaffAdvance[]      @relation("AdvanceRequestedBy")
+  paidStaffPayments   StaffPayment[]      @relation("StaffPaymentPaidBy")
+  auditLogs           AuditLog[]
+  settledClosures     CashClosure[]    @relation("CashClosureSettledBy")
+  emittedInvoices     Invoice[]       @relation("InvoiceEmittedBy")
+
+  @@index([employeeId])
+}
+
+model RolePermission {
+  id         Int      @id @default(autoincrement())
+  role       UserRole
+  permission String
+  allowed    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([role, permission])
+  @@index([role])
+}
+
+model Employee {
+  id             Int      @id @default(autoincrement())
+  fullName       String
+  documentType   String
+  documentNumber String   @unique
+  phone          String?
+  address        String?
+  position       String
+  dailyRate      Decimal? @db.Decimal(10, 2) // tarifa referencial por día/turno, el pago real se calcula desde Attendance
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  user        User?
+  attendances Attendance[]
+  advances    StaffAdvance[]
+  payments    StaffPayment[]
+  discounts   StaffDiscount[]
+  penalties   Penalty[]
+}
+
+// ============================================================
+// HABITACIONES (recurso alquilable, NO producto)
+// ============================================================
+
+model RoomType {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rooms  Room[]
+  prices RoomTypePrice[]
+}
+
+model PriceType {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roomTypePrices RoomTypePrice[]
+  stays          Stay[]
+}
+
+model RoomTypePrice {
+  id          Int      @id @default(autoincrement())
+  roomTypeId  Int
+  priceTypeId Int
+  amount      Decimal  @db.Decimal(10, 2)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  roomType  RoomType  @relation(fields: [roomTypeId], references: [id])
+  priceType PriceType @relation(fields: [priceTypeId], references: [id])
+
+  @@unique([roomTypeId, priceTypeId])
+  @@index([roomTypeId])
+  @@index([priceTypeId])
+}
+
+model Room {
+  id          Int        @id @default(autoincrement())
+  roomNumber  String     @unique
+  roomTypeId  Int
+  roomType    RoomType   @relation(fields: [roomTypeId], references: [id])
+  floor       Int?
+  status      RoomStatus @default(AVAILABLE)
+  description String?
+  active      Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  reservations Reservation[]
+  stays        Stay[]
+  roomProducts RoomProduct[]
+
+  @@index([status])
+}
+
+// ============================================================
+// CLIENTES
+// ============================================================
+
+model Customer {
+  id             Int      @id @default(autoincrement())
+  documentType   String
+  documentNumber String
+  businessName   String? // razón social, solo si documentType = RUC (preparado para facturación)
+  fullName       String
+  phone          String?
+  email          String?
+  address        String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  reservations Reservation[]
+  stays        Stay[]
+  sales        Sale[]
+
+  @@unique([documentType, documentNumber])
+}
+
+// ============================================================
+// RESERVAS Y ESTADÍAS
+// ============================================================
+
+model Reservation {
+  id            Int               @id @default(autoincrement())
+  customerId    Int
+  customer      Customer          @relation(fields: [customerId], references: [id])
+  roomId        Int
+  room          Room              @relation(fields: [roomId], references: [id])
+  startDate     DateTime
+  endDate       DateTime
+  status        ReservationStatus @default(PENDING)
+  depositAmount Decimal?          @db.Decimal(10, 2) // adelanto opcional
+  notes         String?
+  createdById   Int
+  createdBy     User              @relation("ReservationCreatedBy", fields: [createdById], references: [id])
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  stay Stay?
+
+  @@index([roomId, status])
+  @@index([startDate, endDate])
+}
+
+model Stay {
+  id               Int          @id @default(autoincrement())
+  customerId       Int? // nullable: se permite walk-in sin cliente identificado
+  customer         Customer?    @relation(fields: [customerId], references: [id])
+  roomId           Int
+  room             Room         @relation(fields: [roomId], references: [id])
+  reservationId    Int?         @unique
+  reservation      Reservation? @relation(fields: [reservationId], references: [id])
+  checkIn          DateTime     @default(now())
+  expectedCheckOut DateTime?
+  checkOut         DateTime?
+  priceTypeId      Int
+  priceType        PriceType    @relation(fields: [priceTypeId], references: [id])
+  agreedPrice      Decimal      @db.Decimal(10, 2) // precio pactado al check-in (referencial, no es la verdad de lo cobrado)
+  status           StayStatus   @default(ACTIVE)
+  createdById      Int
+  createdBy        User         @relation("StayCreatedBy", fields: [createdById], references: [id])
+  cashShiftId      Int
+  cashShift        CashShift    @relation(fields: [cashShiftId], references: [id])
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  sales       Sale[]
+  saleDetails SaleDetail[]
+  discounts   StaffDiscount[]
+
+  @@index([roomId, status])
+  @@index([priceTypeId])
+  @@index([cashShiftId])
+}
+
+// ============================================================
+// INVENTARIO Y PRODUCTOS
+// ============================================================
+
+model Product {
+  id            Int      @id @default(autoincrement())
+  name          String
+  description   String?
+  purchasePrice Decimal  @db.Decimal(10, 2)
+  salePrice     Decimal  @db.Decimal(10, 2)
+  stock         Int      @default(0)
+  minStock      Int      @default(0)
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  inventoryMovements InventoryMovement[]
+  saleDetails        SaleDetail[]
+  roomProducts       RoomProduct[]
+
+  @@index([active])
+}
+
+model RoomProduct {
+  id        Int      @id @default(autoincrement())
+  roomId    Int
+  room      Room     @relation(fields: [roomId], references: [id])
+  productId Int
+  product   Product  @relation(fields: [productId], references: [id])
+  quantity  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([roomId, productId])
+  @@index([roomId])
+  @@index([productId])
+}
+
+model InventoryMovement {
+  id            Int                   @id @default(autoincrement())
+  productId     Int
+  product       Product               @relation(fields: [productId], references: [id])
+  type          InventoryMovementType
+  quantity      Int
+  reason        String?
+  referenceType String? // 'SALE' | 'STAFF_DISCOUNT' | 'PURCHASE' | 'MANUAL'
+  referenceId   Int?
+  userId        Int
+  user          User                  @relation(fields: [userId], references: [id])
+  createdAt     DateTime              @default(now())
+
+  staffDiscount StaffDiscount?
+
+  @@index([productId])
+  @@index([referenceType, referenceId])
+}
+
+// ============================================================
+// VENTAS (incluye alquiler de habitación como SaleDetail ROOM_RENT)
+// ============================================================
+
+model Sale {
+  id            Int        @id @default(autoincrement())
+  customerId    Int? // nullable: venta de mostrador anónima
+  customer      Customer?  @relation(fields: [customerId], references: [id])
+  stayId        Int? // presente cuando la venta está asociada a una estadía activa
+  stay          Stay?      @relation(fields: [stayId], references: [id])
+  cashShiftId   Int
+  cashShift     CashShift  @relation(fields: [cashShiftId], references: [id])
+  userId        Int
+  user          User       @relation(fields: [userId], references: [id])
+  total         Decimal    @db.Decimal(10, 2)
+  status        SaleStatus @default(OPEN)
+  invoiceType   String?    @default("TICKET") // 'TICKET' | 'BOLETA' | 'FACTURA'
+  invoiceNumber String?
+  cancelReason  String?    // motivo de anulación
+  cancelledAt   DateTime?  // fecha de anulación
+  cancelledById Int?
+  cancelledBy   User?       @relation("SaleCancelledBy", fields: [cancelledById], references: [id])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  details  SaleDetail[]
+  payments SalePayment[]
+  invoice  Invoice?
+
+  @@index([cashShiftId])
+  @@index([stayId])
+}
+
+model SaleDetail {
+  id          Int          @id @default(autoincrement())
+  saleId      Int
+  sale        Sale         @relation(fields: [saleId], references: [id])
+  itemType    SaleItemType
+  productId   Int? // requerido si itemType = PRODUCT (validado en servicio)
+  product     Product?     @relation(fields: [productId], references: [id])
+  stayId      Int? // requerido si itemType = ROOM_RENT (validado en servicio)
+  stay        Stay?        @relation(fields: [stayId], references: [id])
+  description String
+  quantity    Decimal      @db.Decimal(10, 2)
+  unitPrice   Decimal      @db.Decimal(10, 2)
+  subtotal    Decimal      @db.Decimal(10, 2)
+
+  @@index([saleId])
+}
+
+// Soporta pago dividido entre varios métodos en una misma venta
+model SalePayment {
+  id             Int           @id @default(autoincrement())
+  saleId         Int
+  sale           Sale          @relation(fields: [saleId], references: [id])
+  paymentMethod  PaymentMethod
+  amount         Decimal       @db.Decimal(10, 2)
+  cashMovementId Int?          @unique
+  cashMovement   CashMovement? @relation(fields: [cashMovementId], references: [id])
+  createdAt      DateTime      @default(now())
+
+  @@index([saleId])
+}
+
+// ============================================================
+// FACTURACIÓN ELECTRÓNICA (SUNAT)
+// ============================================================
+
+model Invoice {
+  id                Int           @id @default(autoincrement())
+  saleId            Int?          @unique // venta origen (nullable para notas sueltas futuras)
+  sale              Sale?         @relation(fields: [saleId], references: [id])
+  invoiceType       String // '01' factura | '03' boleta | '07' nota credito | '08' nota debito
+  serie             String // 'F001' | 'B001' | 'FC01' | 'BC01'
+  correlativo       Int
+  docNumber         String        @unique // 'F001-00001' (calculado)
+  issueDate         DateTime      @default(now())
+
+  // Totales (snapshot de la venta)
+  currency          String        @default("PEN")
+  taxableAmount     Decimal       @db.Decimal(14, 2) // base imponible (gravada)
+  exemptAmount      Decimal       @db.Decimal(14, 2) @default(0) // exonerada/inafecta
+  taxAmount         Decimal       @db.Decimal(14, 2) // IGV
+  total             Decimal       @db.Decimal(14, 2) // incl. IGV
+
+  // Cliente snapshot
+  customerDocType   String // '1' DNI | '6' RUC | '0' sin doc
+  customerDocNumber String
+  customerName      String
+
+  // Respuesta SUNAT
+  status            InvoiceStatus @default(PENDING)
+  sunatCode         String? // ResponseCode del CDR ('0' = aceptado)
+  sunatDescription  String?
+  cdrXml            String? // contenido del CDR (XML)
+  signedXml         String? // XML firmado enviado
+  hash              String? // código de verificación para QR
+
+  // Nota de crédito/débito
+  affectedInvoiceId Int?
+  affectedInvoice   Invoice?      @relation("InvoiceAffectation", fields: [affectedInvoiceId], references: [id])
+  affectingInvoices Invoice[]     @relation("InvoiceAffectation")
+  cancelReason      String?
+
+  emittedById       Int
+  emittedBy         User          @relation("InvoiceEmittedBy", fields: [emittedById], references: [id])
+  pdfBase64         String? // PDF generado
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  @@index([affectedInvoiceId])
+  @@index([emittedById])
+  @@index([status])
+  @@index([serie, correlativo])
+}
+
+// Numeración correlativa por serie.
+model InvoiceCounter {
+  serie    String @id // 'F001', 'B001', 'FC01', 'BC01'
+  current  Int    @default(0)
+}
+
+// ============================================================
+// CAJA
+// ============================================================
+
+model CashShift {
+  id            Int             @id @default(autoincrement())
+  openedById    Int
+  openedBy      User            @relation("CashShiftOpenedBy", fields: [openedById], references: [id])
+  openedAt      DateTime        @default(now())
+  openingAmount Decimal         @db.Decimal(10, 2)
+  closedById    Int?
+  closedBy      User?           @relation("CashShiftClosedBy", fields: [closedById], references: [id])
+  closedAt      DateTime?
+  status        CashShiftStatus @default(OPEN)
+
+  stays         Stay[]
+  sales         Sale[]
+  cashMovements CashMovement[]
+  closure       CashClosure?
+
+  @@index([status])
+}
+
+model CashMovement {
+  id            Int                  @id @default(autoincrement())
+  cashShiftId   Int
+  cashShift     CashShift            @relation(fields: [cashShiftId], references: [id])
+  userId        Int
+  user          User                 @relation(fields: [userId], references: [id])
+  type          CashMovementType
+  category      CashMovementCategory
+  amount        Decimal              @db.Decimal(10, 2)
+  paymentMethod PaymentMethod
+  description   String?
+  referenceType String? // 'SALE' | 'STAFF_ADVANCE' | 'STAFF_PAYMENT' | 'STAFF_DISCOUNT' | 'RESERVATION' | 'MANUAL'
+  referenceId   Int?
+  occurredAt    DateTime             @default(now())
+  createdAt     DateTime             @default(now())
+
+  staffAdvance  StaffAdvance?
+  staffPayment  StaffPayment?
+  staffDiscount StaffDiscount?
+  salePayment   SalePayment?
+  closureSettle CashClosure?
+
+  @@index([cashShiftId])
+  @@index([referenceType, referenceId])
+}
+
+model CashClosure {
+  id            Int       @id @default(autoincrement())
+  cashShiftId   Int       @unique
+  cashShift     CashShift @relation(fields: [cashShiftId], references: [id])
+  totalExpected Decimal   @db.Decimal(10, 2)
+  totalCounted  Decimal   @db.Decimal(10, 2)
+  difference    Decimal   @db.Decimal(10, 2)
+  notes         String?
+  createdAt     DateTime  @default(now())
+
+  // Cuadre de diferencia (settle). Null si la diferencia aún está pendiente.
+  settled           Boolean        @default(false)
+  settledAt         DateTime?
+  settledById       Int?
+  settledBy         User?          @relation("CashClosureSettledBy", fields: [settledById], references: [id])
+  settleReason      String?
+  settleCashMovementId Int?        @unique
+  settleCashMovement   CashMovement? @relation(fields: [settleCashMovementId], references: [id])
+
+  details CashClosureDetail[]
+}
+
+// Detalle de cierre por método de pago (reemplaza columnas fijas expectedCash/countedCash/etc.)
+model CashClosureDetail {
+  id             Int           @id @default(autoincrement())
+  cashClosureId  Int
+  cashClosure    CashClosure   @relation(fields: [cashClosureId], references: [id])
+  paymentMethod  PaymentMethod
+  expectedAmount Decimal       @db.Decimal(10, 2)
+  countedAmount  Decimal       @db.Decimal(10, 2)
+  difference     Decimal       @db.Decimal(10, 2)
+
+  @@index([cashClosureId])
+}
+
+// ============================================================
+// PERSONAL: ASISTENCIA, PAGOS, ADELANTOS, DESCUENTOS
+// ============================================================
+
+model Attendance {
+  id         Int              @id @default(autoincrement())
+  employeeId Int
+  employee   Employee         @relation(fields: [employeeId], references: [id])
+  date       DateTime         @db.Date
+  checkIn    DateTime?
+  checkOut   DateTime?
+  status     AttendanceStatus
+  notes      String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  @@unique([employeeId, date])
+}
+
+model StaffAdvance {
+  id             Int           @id @default(autoincrement())
+  employeeId     Int
+  employee       Employee      @relation(fields: [employeeId], references: [id])
+  amount         Decimal       @db.Decimal(10, 2)
+  reason         String?
+  requestedById  Int
+  requestedBy    User          @relation("AdvanceRequestedBy", fields: [requestedById], references: [id])
+  cashMovementId Int?          @unique
+  cashMovement   CashMovement? @relation(fields: [cashMovementId], references: [id])
+  createdAt      DateTime      @default(now())
+
+  @@index([employeeId])
+}
+
+model StaffPayment {
+  id             Int          @id @default(autoincrement())
+  employeeId     Int
+  employee       Employee     @relation(fields: [employeeId], references: [id])
+  grossAmount    Decimal      @db.Decimal(10, 2) // sueldo bruto calculado
+  penaltyAmount  Decimal      @db.Decimal(10, 2) @default(0) // total de penalidades aplicadas
+  amount         Decimal      @db.Decimal(10, 2) // monto neto pagado (bruto - penalidades)
+  periodStart    DateTime     @db.Date
+  periodEnd      DateTime     @db.Date
+  cashMovementId Int          @unique
+  cashMovement   CashMovement @relation(fields: [cashMovementId], references: [id])
+  paidById       Int
+  paidBy         User         @relation("StaffPaymentPaidBy", fields: [paidById], references: [id])
+  createdAt      DateTime     @default(now())
+
+  penalties StaffPaymentPenalty[]
+
+  @@index([employeeId])
+}
+
+// Registro de penalidades/descuentos al personal, independiente de la asistencia.
+// Cuando se aplica en un pago, queda vinculada vía StaffPaymentPenalty.
+model Penalty {
+  id            Int          @id @default(autoincrement())
+  employeeId    Int
+  employee      Employee     @relation(fields: [employeeId], references: [id])
+  amount        Decimal      @db.Decimal(10, 2)
+  reason        String
+  date          DateTime     @db.Date
+  status        PenaltyStatus @default(PENDING)
+  createdAt     DateTime     @default(now())
+
+  paymentLinks  StaffPaymentPenalty[]
+
+  @@index([employeeId, status])
+}
+
+enum PenaltyStatus {
+  PENDING
+  APPLIED
+  VOIDED
+}
+
+// Vincula una penalidad aplicada con el pago que la descontó.
+model StaffPaymentPenalty {
+  id             Int          @id @default(autoincrement())
+  staffPaymentId Int
+  staffPayment   StaffPayment @relation(fields: [staffPaymentId], references: [id])
+  penaltyId      Int
+  penalty        Penalty      @relation(fields: [penaltyId], references: [id])
+  amount         Decimal      @db.Decimal(10, 2) // monto aplicado (snapshot)
+
+  @@unique([penaltyId])
+  @@index([staffPaymentId])
+}
+
+model StaffDiscount {
+  id                  Int                @id @default(autoincrement())
+  employeeId          Int
+  employee            Employee           @relation(fields: [employeeId], references: [id])
+  amount              Decimal            @db.Decimal(10, 2)
+  reason              String
+  inventoryMovementId Int?               @unique // vincula a la pérdida real (InventoryMovement type = LOSS)
+  inventoryMovement   InventoryMovement? @relation(fields: [inventoryMovementId], references: [id])
+  stayId              Int? // opcional: si la pérdida/daño ocurrió durante una estadía específica
+  stay                Stay?              @relation(fields: [stayId], references: [id])
+  cashMovementId      Int?               @unique
+  cashMovement        CashMovement?      @relation(fields: [cashMovementId], references: [id])
+  createdAt           DateTime           @default(now())
+
+  @@index([employeeId])
+}
+
+// ============================================================
+// AUDITORÍA
+// ============================================================
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String // 'CREATE' | 'UPDATE' | 'DELETE' | 'CHECK_IN' | 'CHECK_OUT' | 'CASH_CLOSE' | etc.
+  entity    String // nombre del modelo afectado
+  entityId  Int
+  oldData   Json?
+  newData   Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
