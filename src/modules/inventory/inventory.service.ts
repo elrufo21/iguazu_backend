@@ -57,8 +57,14 @@ export class InventoryService {
         throw new NotFoundException('Producto activo no encontrado.');
       }
 
-      const quantity = this.normalizedQuantity(type, dto.quantity);
-      const nextStock = product.stock + quantity;
+      // Si es ingreso (IN), la quantity del DTO representa paquetes/cajas.
+      // Se multiplica por purchaseFactor para obtener unidades de stock.
+      const stockDelta = this.normalizedQuantity(
+        type,
+        dto.quantity,
+        type === InventoryMovementType.IN ? product.purchaseFactor : 1,
+      );
+      const nextStock = product.stock + stockDelta;
       if (nextStock < 0) throw new BadRequestException('Stock insuficiente.');
 
       await tx.product.update({
@@ -81,12 +87,16 @@ export class InventoryService {
     });
   }
 
-  private normalizedQuantity(type: InventoryMovementType, quantity: number) {
+  private normalizedQuantity(
+    type: InventoryMovementType,
+    quantity: number,
+    purchaseFactor = 1,
+  ) {
     if (type !== InventoryMovementType.ADJUSTMENT && quantity <= 0) {
       throw new BadRequestException('La cantidad debe ser mayor a cero.');
     }
 
-    if (type === InventoryMovementType.IN) return quantity;
+    if (type === InventoryMovementType.IN) return quantity * purchaseFactor;
     if (type === InventoryMovementType.ADJUSTMENT) return quantity;
     return -quantity;
   }

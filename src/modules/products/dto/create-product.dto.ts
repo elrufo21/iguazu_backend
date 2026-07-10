@@ -38,4 +38,14 @@ export class CreateProductDto {
   @Min(0)
   @IsOptional()
   minStock?: number;
+
+  @IsString()
+  @IsOptional()
+  unit?: string;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @IsOptional()
+  purchaseFactor?: number;
 }

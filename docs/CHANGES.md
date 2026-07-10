@@ -54,13 +54,10 @@ Se realizaron 5 etapas de mejora sobre el backend NestJS + Prisma + PostgreSQL y
 **Archivo:** `src/modules/sales/sales.service.ts`
 
 ### 1.5 Seed inicial
-**Nuevo** `prisma/seed.ts` idempotente. Crea:
+**Nuevo** `prisma/seed.ts`. Limpia la data operativa y crea:
 - Usuario `admin` (password configurable via `SEED_ADMIN_PASSWORD`, default `Admin123!`).
 - Permisos por defecto para `RECEPTIONIST` y `CASHIER`.
-- 2 tipos de habitación (Simple, Matrimonial).
-- 2 tipos de precio (Por hora, Por día) + matriz de 4 precios.
-- 6 habitaciones (101-103, 201-203).
-- 6 productos básicos.
+- Sin habitaciones, productos, clientes, ventas, cajas ni catálogos precargados.
 
 **Archivos:**
 - `prisma/seed.ts` (nuevo)
@@ -508,7 +505,7 @@ El `billing.service` calcula base = total / 1.18. Si el hotel maneja precios sin
 cd backend_iguazu
 cp .env.example .env          # configurar DATABASE_URL y credenciales SUNAT
 npx prisma migrate dev        # aplica las 5 migraciones
-npx prisma db seed            # crea admin + datos operativos
+npx prisma db seed            # limpia data y deja admin + permisos base
 npm run start:dev             # levanta backend en :3000
 
 # Frontend

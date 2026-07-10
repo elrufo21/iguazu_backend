@@ -1,23 +1,15 @@
 /**
  * Seed inicial — Iguazú
- * Levanta el sistema desde cero con datos operativos mínimos.
- * Idempotente: todas las operaciones son upsert.
+ * Reinicia la data operativa y deja solo la base mínima.
  *
  * Uso:  npx prisma db seed
  *
  * Usuario administrador:
  *   username: process.env.SEED_ADMIN_USERNAME  (default: admin)
  *   password: process.env.SEED_ADMIN_PASSWORD  (default: Admin123!)
- *
- * Antes de asignar usuario-admin a un Employee, crea el Employee por si
- * el admin necesita figurar como personal (opcional).
  */
 import { PrismaPg } from '@prisma/adapter-pg';
-import {
-  CashMovementCategory,
-  PrismaClient,
-  UserRole,
-} from '@prisma/client';
+import { PrismaClient, UserRole } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
 const prisma = new PrismaClient({
@@ -95,22 +87,10 @@ const CASHIER_PERMISSIONS = [
   'GET /staff-payments',
 ] as const;
 
-async function findOrCreateRoomType(name: string, description: string) {
-  const existing = await prisma.roomType.findFirst({ where: { name } });
-  if (existing) return existing;
-  return prisma.roomType.create({
-    data: { name, description, active: true },
-  });
-}
-
-async function findOrCreatePriceType(name: string) {
-  const existing = await prisma.priceType.findFirst({ where: { name } });
-  if (existing) return existing;
-  return prisma.priceType.create({ data: { name, active: true } });
-}
-
 async function main() {
   console.log('→ Seed Iguazú');
+  await resetData();
+  console.log('  ✓ Data operativa limpiada');
 
   // ----- 1. Usuario administrador -----
   const adminUsername = process.env.SEED_ADMIN_USERNAME ?? 'admin';
@@ -139,58 +119,15 @@ async function main() {
   await seedRolePermissions(UserRole.CASHIER, CASHIER_PERMISSIONS);
   console.log('  ✓ Permisos por rol (RECEPTIONIST, CASHIER)');
 
-  // ----- 3. Tipos de habitación + Tipos de precio + Matriz de precios -----
-  const simple = await findOrCreateRoomType('Simple', 'Habitación simple');
-  const matrimonial = await findOrCreateRoomType(
-    'Matrimonial',
-    'Habitación matrimonial',
-  );
-
-  const porHora = await findOrCreatePriceType('Por hora');
-  const porDia = await findOrCreatePriceType('Por día');
-
-  // Matriz de precios (RoomTypeId, PriceTypeId) -> monto
-  const priceMatrix: Array<[number, number, number]> = [
-    [simple.id, porHora.id, 25],
-    [simple.id, porDia.id, 80],
-    [matrimonial.id, porHora.id, 35],
-    [matrimonial.id, porDia.id, 120],
-  ];
-  for (const [roomTypeId, priceTypeId, amount] of priceMatrix) {
-    await prisma.roomTypePrice.upsert({
-      where: { roomTypeId_priceTypeId: { roomTypeId, priceTypeId } },
-      update: {},
-      create: { roomTypeId, priceTypeId, amount, active: true },
-    });
-  }
-  console.log('  ✓ Tipos de habitación, tipos de precio y matriz de precios');
-
-  // ----- 4. Habitaciones -----
-  const rooms = [
-    { roomNumber: '101', roomTypeId: simple.id, floor: 1 },
-    { roomNumber: '102', roomTypeId: simple.id, floor: 1 },
-    { roomNumber: '103', roomTypeId: simple.id, floor: 1 },
-    { roomNumber: '201', roomTypeId: matrimonial.id, floor: 2 },
-    { roomNumber: '202', roomTypeId: matrimonial.id, floor: 2 },
-    { roomNumber: '203', roomTypeId: matrimonial.id, floor: 2 },
-  ];
-  for (const room of rooms) {
-    await prisma.room.upsert({
-      where: { roomNumber: room.roomNumber },
-      update: {},
-      create: { ...room, status: 'AVAILABLE', active: true },
-    });
-  }
-  console.log(`  ✓ ${rooms.length} habitaciones`);
-
-  // ----- 5. Productos básicos -----
+  // ----- 3. Productos básicos con unidad y factor de compra -----
   const products = [
-    { name: 'Agua mineral 610ml', purchasePrice: 1.0, salePrice: 3.0, stock: 24, minStock: 6 },
-    { name: 'Gaseosa 500ml', purchasePrice: 1.5, salePrice: 4.0, stock: 24, minStock: 6 },
-    { name: 'Cerveza 330ml', purchasePrice: 3.0, salePrice: 6.0, stock: 24, minStock: 6 },
-    { name: 'Snack (papas)', purchasePrice: 1.0, salePrice: 3.0, stock: 18, minStock: 6 },
-    { name: 'Café', purchasePrice: 0.5, salePrice: 2.5, stock: 30, minStock: 6 },
-    { name: 'Toalla extra', purchasePrice: 2.0, salePrice: 5.0, stock: 10, minStock: 3 },
+    // unit = unidad de venta/stock, purchaseFactor = cuántas unidades entran al comprar 1 paquete/caja.
+    { name: 'Agua mineral 610ml', purchasePrice: 1.0, salePrice: 3.0, stock: 0, minStock: 6, unit: 'UNIDAD', purchaseFactor: 24 },
+    { name: 'Gaseosa 500ml', purchasePrice: 1.5, salePrice: 4.0, stock: 0, minStock: 6, unit: 'UNIDAD', purchaseFactor: 12 },
+    { name: 'Cerveza 330ml', purchasePrice: 3.0, salePrice: 6.0, stock: 0, minStock: 6, unit: 'UNIDAD', purchaseFactor: 6 },
+    { name: 'Snack (papas)', purchasePrice: 1.0, salePrice: 3.0, stock: 0, minStock: 6, unit: 'UNIDAD', purchaseFactor: 1 },
+    { name: 'Café', purchasePrice: 0.5, salePrice: 2.5, stock: 0, minStock: 3, unit: 'UNIDAD', purchaseFactor: 1 },
+    { name: 'Toalla extra', purchasePrice: 2.0, salePrice: 5.0, stock: 0, minStock: 3, unit: 'UNIDAD', purchaseFactor: 6 },
   ];
   for (const product of products) {
     const existing = await prisma.product.findFirst({
@@ -202,13 +139,24 @@ async function main() {
       await prisma.product.create({ data: { ...product, active: true } });
     }
   }
-  console.log(`  ✓ ${products.length} productos básicos`);
-
-  // (CashMovementCategory se importa solo para asegurar que el enum existe en uso;
-  // los métodos de pago son enum en el schema, no requieren seed.)
-  void CashMovementCategory;
+  console.log(`  ✓ ${products.length} productos básicos (con unidad y factor de compra)`);
 
   console.log('✓ Seed completado.');
+}
+
+async function resetData() {
+  const tables = await prisma.$queryRaw<{ name: string }[]>`
+    SELECT format('%I.%I', schemaname, tablename) AS name
+    FROM pg_tables
+    WHERE schemaname = 'public'
+      AND tablename <> '_prisma_migrations'
+  `;
+
+  if (!tables.length) return;
+
+  await prisma.$executeRawUnsafe(
+    `TRUNCATE TABLE ${tables.map((table) => table.name).join(', ')} RESTART IDENTITY CASCADE`,
+  );
 }
 
 async function seedRolePermissions(
