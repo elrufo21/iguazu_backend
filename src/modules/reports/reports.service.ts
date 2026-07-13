@@ -174,7 +174,7 @@ export class ReportsService {
           const key = String(detail.productId);
           acc[key] ??= {
             productId: detail.productId,
-            product: detail.product?.name ?? 'Producto',
+            product: this.productTitle(detail.product),
             unit: detail.product?.unit ?? '-',
             quantity: 0,
             total: 0,
@@ -366,7 +366,7 @@ export class ReportsService {
         .filter((product) => product.stock <= product.minStock)
         .map((product) => ({
           id: product.id,
-          name: product.name,
+          name: this.productTitle(product),
           stock: product.stock,
           minStock: product.minStock,
         })),
@@ -379,7 +379,7 @@ export class ReportsService {
       ),
       movements: movements.map((movement) => ({
         id: movement.id,
-        product: movement.product.name,
+        product: this.productTitle(movement.product),
         type: movement.type,
         quantity: movement.quantity,
         reason: movement.reason,
@@ -576,5 +576,11 @@ export class ReportsService {
 
   private sum(values: number[]) {
     return Number(values.reduce((total, value) => total + Number(value), 0).toFixed(2));
+  }
+
+  private productTitle(product?: { name?: string | null; description?: string | null } | null) {
+    const name = product?.name?.trim() || 'Producto';
+    const description = product?.description?.trim();
+    return description ? `${name} - ${description}` : name;
   }
 }
