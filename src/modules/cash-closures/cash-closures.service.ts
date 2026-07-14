@@ -15,6 +15,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CloseCashShiftDto } from './dto/close-cash-shift.dto';
+import { CorrectCashClosureDto } from './dto/correct-cash-closure.dto';
 import { SettleDifferenceDto } from './dto/settle-difference.dto';
 
 @Injectable()
@@ -300,6 +301,115 @@ export class CashClosuresService {
 
       return reopened;
     });
+  }
+
+  async correctCounts(
+    closureId: number,
+    dto: CorrectCashClosureDto,
+    user: { sub: number; role: UserRole },
+  ) {
+    if (user.role !== UserRole.ADMIN) {
+      throw new ForbiddenException('Solo ADMIN puede corregir conteos de cierre.');
+    }
+
+    const closure = await this.prisma.cashClosure.findUnique({
+      where: { id: closureId },
+      include: { details: true, cashShift: true },
+    });
+    if (!closure) {
+      throw new NotFoundException('Cierre de caja no encontrado.');
+    }
+    if (closure.settled) {
+      throw new BadRequestException(
+        'Este cierre ya fue cuadrado con un movimiento de ajuste.',
+      );
+    }
+
+    const counted = new Map<PaymentMethod, number>();
+    for (const item of dto.countedAmounts) {
+      if (counted.has(item.paymentMethod)) {
+        throw new BadRequestException(`Método duplicado: ${item.paymentMethod}.`);
+      }
+      counted.set(item.paymentMethod, Number(item.countedAmount));
+    }
+
+    const detailsByMethod = new Map(
+      closure.details.map((detail) => [detail.paymentMethod, detail]),
+    );
+    const details = Object.values(PaymentMethod).map((paymentMethod) => {
+      const existing = detailsByMethod.get(paymentMethod);
+      const expectedAmount = Number(existing?.expectedAmount ?? 0);
+      const countedAmount = counted.get(paymentMethod) ?? Number(existing?.countedAmount ?? 0);
+      return {
+        id: existing?.id,
+        paymentMethod,
+        expectedAmount,
+        countedAmount,
+        difference: Number((countedAmount - expectedAmount).toFixed(2)),
+      };
+    });
+    const totalExpected = this.sum(details.map((detail) => detail.expectedAmount));
+    const totalCounted = this.sum(details.map((detail) => detail.countedAmount));
+    const difference = Number((totalCounted - totalExpected).toFixed(2));
+
+    await this.prisma.$transaction(async (tx) => {
+      for (const detail of details) {
+        if (detail.id) {
+          await tx.cashClosureDetail.update({
+            where: { id: detail.id },
+            data: {
+              countedAmount: detail.countedAmount,
+              difference: detail.difference,
+            },
+          });
+          continue;
+        }
+
+        await tx.cashClosureDetail.create({
+          data: {
+            cashClosureId: closureId,
+            paymentMethod: detail.paymentMethod,
+            expectedAmount: detail.expectedAmount,
+            countedAmount: detail.countedAmount,
+            difference: detail.difference,
+          },
+        });
+      }
+
+      await tx.cashClosure.update({
+        where: { id: closureId },
+        data: { totalExpected, totalCounted, difference },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.sub,
+          action: 'CASH_CLOSURE_CORRECT_COUNTS',
+          entity: 'CashClosure',
+          entityId: closureId,
+          oldData: {
+            totalExpected: Number(closure.totalExpected),
+            totalCounted: Number(closure.totalCounted),
+            difference: Number(closure.difference),
+            details: closure.details.map((detail) => ({
+              paymentMethod: detail.paymentMethod,
+              expectedAmount: Number(detail.expectedAmount),
+              countedAmount: Number(detail.countedAmount),
+              difference: Number(detail.difference),
+            })),
+          },
+          newData: {
+            totalExpected,
+            totalCounted,
+            difference,
+            reason: dto.reason,
+            details,
+          },
+        },
+      });
+    });
+
+    return this.findOne(closureId);
   }
 
   /**

@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   UseGuards,
 } from '@nestjs/common';
@@ -11,6 +12,7 @@ import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CashClosuresService } from './cash-closures.service';
 import { CloseCashShiftDto } from './dto/close-cash-shift.dto';
+import { CorrectCashClosureDto } from './dto/correct-cash-closure.dto';
 import { SettleDifferenceDto } from './dto/settle-difference.dto';
 
 @UseGuards(JwtAuthGuard)
@@ -44,6 +46,15 @@ export class CashClosuresController {
     @CurrentUser() user: any,
   ) {
     return this.cashClosuresService.reopen(id, user);
+  }
+
+  @Patch(':id/counts')
+  correctCounts(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CorrectCashClosureDto,
+    @CurrentUser() user: any,
+  ) {
+    return this.cashClosuresService.correctCounts(id, dto, user);
   }
 
   @Post(':id/settle')
