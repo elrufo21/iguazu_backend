@@ -6,6 +6,8 @@ export const AVAILABLE_PERMISSIONS = [
   'GET /billing',
   'GET /billing/:id',
   'GET /billing/:id/pdf',
+  'GET /billing/:id/xml',
+  'GET /billing/:id/cdr',
   'POST /cash-closures/close',
   'GET /cash-closures/preview',
   'GET /cash-closures',

@@ -67,4 +67,38 @@ export class BillingController {
     );
     res.send(buffer);
   }
+
+  @Get(':id/xml')
+  async downloadXml(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const invoice = await this.billingService.findOne(id);
+    if (!invoice?.signedXml) {
+      return res.status(404).json({ message: 'El comprobante no tiene XML firmado.' });
+    }
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${invoice.docNumber}.xml"`,
+    );
+    res.send(invoice.signedXml);
+  }
+
+  @Get(':id/cdr')
+  async downloadCdr(
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const invoice = await this.billingService.findOne(id);
+    if (!invoice?.cdrXml) {
+      return res.status(404).json({ message: 'SUNAT no devolvió CDR para este comprobante.' });
+    }
+    res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="R-${invoice.docNumber}.xml"`,
+    );
+    res.send(invoice.cdrXml);
+  }
 }
