@@ -178,6 +178,7 @@ export class BillingService {
       sunatCode: result.sunatCode,
       sunatDescription: result.sunatDescription,
       pdfBase64,
+      sunatRequest: this.safeSunatRequest(nombreZip, data),
     };
   }
 
@@ -523,6 +524,43 @@ export class BillingService {
           amount: (Number(d.unitPrice) / IGV_FACTOR).toFixed(2),
           currencyID: 'PEN',
         },
+      })),
+    };
+  }
+
+  private safeSunatRequest(nombreZip: string, data: ComprobanteData) {
+    return {
+      modo: this.config.modo,
+      endpoint: this.config.endpoint,
+      zipFileName: `${nombreZip}.zip`,
+      usuario: this.config.usuario,
+      emisor: {
+        ruc: data.emisor.ruc,
+        razonSocial: data.emisor.razonSocial,
+      },
+      comprobante: {
+        id: data.cabecera.id,
+        tipo: data.cabecera.invoiceTypeCode,
+        fecha: data.cabecera.issueDate,
+        hora: data.cabecera.issueTime,
+        moneda: data.cabecera.documentCurrencyCode,
+      },
+      cliente: {
+        documentoTipo: data.cliente.documentTypeCode,
+        documentoNumero: data.cliente.ruc,
+        nombre: data.cliente.razonSocial,
+      },
+      totales: {
+        gravada: data.legalMonetaryTotal.lineExtensionAmount,
+        igv: data.taxTotal.taxAmount,
+        total: data.legalMonetaryTotal.payableAmount,
+      },
+      items: data.items.map((item) => ({
+        descripcion: item.item.description,
+        cantidad: item.quantity,
+        precioUnitario: item.pricingReference?.priceAmount ?? item.price.amount,
+        base: item.lineExtensionAmount,
+        igv: item.taxTotal.taxAmount,
       })),
     };
   }
