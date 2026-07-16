@@ -57,4 +57,9 @@ export class RoomsController {
   toggleActive(@Param('id', ParseIntPipe) id: number) {
     return this.roomsService.toggleActive(id);
   }
+
+  @Patch(':id/clean')
+  markClean(@Param('id', ParseIntPipe) id: number) {
+    return this.roomsService.markClean(id);
+  }
 }

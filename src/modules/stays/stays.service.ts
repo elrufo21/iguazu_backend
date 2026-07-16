@@ -272,7 +272,7 @@ export class StaysService {
 
       await tx.room.update({
         where: { id: stay.roomId },
-        data: { status: RoomStatus.AVAILABLE },
+        data: { status: RoomStatus.RESERVED },
       });
 
       return closed;

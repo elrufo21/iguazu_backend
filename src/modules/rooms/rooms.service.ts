@@ -112,6 +112,19 @@ export class RoomsService {
     });
   }
 
+  async markClean(id: number) {
+    const room = await this.getRoomOrThrow(id);
+    if (room.status !== RoomStatus.RESERVED) {
+      throw new BadRequestException('La habitación no está pendiente de limpieza.');
+    }
+
+    return this.prisma.room.update({
+      where: { id },
+      data: { status: RoomStatus.AVAILABLE },
+      include: roomInclude,
+    });
+  }
+
   async products(id: number) {
     await this.getRoomOrThrow(id);
 
