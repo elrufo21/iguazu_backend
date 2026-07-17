@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import QRCode from 'qrcode';
 import { BillingConfig } from '../billing.config';
+import { limaDate } from '../billing-date';
 
 export interface PdfInvoiceInput {
   docNumber: string; // 'F001-00001'
@@ -162,7 +163,7 @@ export class PdfService {
       input.docNumber.split('-')[1] ?? '', // correlativo
       this.igvStr(input.taxAmount),
       this.totalStr(input.total),
-      input.issueDate.toISOString().slice(0, 10),
+      limaDate(input.issueDate),
       input.customerDocType,
       input.customerDocNumber,
       input.hash ?? '',

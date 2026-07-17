@@ -26,7 +26,8 @@ import { UnzipCdrService } from './sunat/unzip-cdr.service';
 import { PdfService } from './sunat/pdf.service';
 import { SummaryBuilderService } from './sunat/summary-builder.service';
 import { SummaryProcessorService } from './summary-processor.service';
-import { IssueCreditNoteDto, IssueFromSaleDto } from './dto/billing.dto';
+import { IssueCreditNoteDto, IssueFromSaleDto, MarkInvoiceRejectedDto } from './dto/billing.dto';
+import { limaDate, limaTime } from './billing-date';
 
 @Injectable()
 export class BillingService {
@@ -447,6 +448,24 @@ export class BillingService {
     };
   }
 
+  async markUnresolvedBoletaRejected(invoiceId: number, dto: MarkInvoiceRejectedDto) {
+    const invoice = await this.invoices.findOne(invoiceId);
+    if (!invoice) throw new NotFoundException('Comprobante no encontrado.');
+    if (invoice.invoiceType !== '03') {
+      throw new BadRequestException('Solo aplica a boletas en Resumen Diario.');
+    }
+    if (invoice.status !== InvoiceStatus.PENDING || invoice.cdrXml) {
+      throw new BadRequestException('Solo se puede marcar una boleta pendiente sin CDR.');
+    }
+
+    return this.invoices.update(invoiceId, {
+      status: InvoiceStatus.REJECTED,
+      summaryStatus: 'error_consulta',
+      sunatCode: null,
+      sunatDescription: `Rechazo manual por consulta SUNAT inconclusa: ${dto.reason.trim()}`,
+    });
+  }
+
   // ============================================================
   // Listado / detalle
   // ============================================================
@@ -553,8 +572,8 @@ export class BillingService {
   }): ComprobanteData {
     const emisor = this.config.emisor;
     const now = new Date();
-    const issueDate = now.toISOString().slice(0, 10);
-    const issueTime = now.toTimeString().slice(0, 8);
+    const issueDate = limaDate(now);
+    const issueTime = limaTime(now);
     const [serieDoc] = input.docNumber.split('-');
     void serieDoc;
     void input.serie;
@@ -779,8 +798,8 @@ export class BillingService {
   }): ComprobanteData {
     const emisor = this.config.emisor;
     const now = new Date();
-    const issueDate = now.toISOString().slice(0, 10);
-    const issueTime = now.toTimeString().slice(0, 8);
+    const issueDate = limaDate(now);
+    const issueTime = limaTime(now);
     void input.serie;
     void input.correlativo;
 

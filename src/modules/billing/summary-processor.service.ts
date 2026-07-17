@@ -8,6 +8,7 @@ import { SummaryBuilderService, type SummaryLine } from './sunat/summary-builder
 import { XmlSignerService } from './sunat/xml-signer.service';
 import { ZipService } from './sunat/zip.service';
 import { UnzipCdrService } from './sunat/unzip-cdr.service';
+import { limaDate } from './billing-date';
 
 export interface SendSummaryResult {
   /** Cuántas boletas se incluyeron en el resumen enviado. */
@@ -301,6 +302,6 @@ export class SummaryProcessorService {
   }
 
   private toDate(d: Date): string {
-    return d.toISOString().slice(0, 10);
+    return limaDate(d);
   }
 }

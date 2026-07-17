@@ -3,6 +3,7 @@ export const AVAILABLE_PERMISSIONS = [
   'GET /audit/:id',
   'POST /billing/issue-from-sale/:saleId',
   'POST /billing/:id/credit-note',
+  'POST /billing/:id/mark-rejected',
   'GET /billing',
   'GET /billing/:id',
   'GET /billing/:id/pdf',

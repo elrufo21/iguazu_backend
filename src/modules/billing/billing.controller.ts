@@ -12,7 +12,7 @@ import type { Response } from 'express';
 import { CurrentUser } from 'src/common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { BillingService } from './billing.service';
-import { IssueCreditNoteDto, IssueFromSaleDto } from './dto/billing.dto';
+import { IssueCreditNoteDto, IssueFromSaleDto, MarkInvoiceRejectedDto } from './dto/billing.dto';
 import { SummaryProcessorService } from './summary-processor.service';
 
 @UseGuards(JwtAuthGuard)
@@ -41,6 +41,15 @@ export class BillingController {
     @CurrentUser() user: any,
   ) {
     return this.billingService.issueCreditNote(id, dto, user.sub);
+  }
+
+  /** Marca manualmente una boleta pendiente como rechazada cuando SUNAT no devuelve CDR. */
+  @Post(':id/mark-rejected')
+  markRejected(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MarkInvoiceRejectedDto,
+  ) {
+    return this.billingService.markUnresolvedBoletaRejected(id, dto);
   }
 
   /**

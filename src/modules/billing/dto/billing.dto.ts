@@ -18,3 +18,10 @@ export class IssueCreditNoteDto {
   @MaxLength(280)
   reason!: string;
 }
+
+export class MarkInvoiceRejectedDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(280)
+  reason!: string;
+}
