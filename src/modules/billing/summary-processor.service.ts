@@ -29,6 +29,8 @@ export interface ProcessPendingResult {
   resolvedInvoices: number;
   /** Cuántas boletas siguen en proceso en SUNAT ('98'). */
   stillPending: number;
+  /** Cuántos tickets fallaron al consultar SUNAT. */
+  queryErrors: number;
 }
 
 /**
@@ -209,7 +211,7 @@ export class SummaryProcessorService {
       this.logger.log(
         `[CONSULTA] ${new Date().toISOString()} — No hay boletas pendientes de SUNAT. Nada que consultar.`,
       );
-      return { processedTickets: 0, resolvedInvoices: 0, stillPending: 0 };
+      return { processedTickets: 0, resolvedInvoices: 0, stillPending: 0, queryErrors: 0 };
     }
 
     this.logger.log(
@@ -218,6 +220,7 @@ export class SummaryProcessorService {
 
     let resolvedInvoices = 0;
     let stillPending = 0;
+    let queryErrors = 0;
     for (const row of pendingTickets) {
       const ticket = row.ticket!;
       const ticketInvoices = await this.prisma.invoice.count({ where: { ticket } });
@@ -237,6 +240,7 @@ export class SummaryProcessorService {
         if (!status.cdrBase64) {
           this.logger.warn(`Ticket ${ticket}: statusCode ${status.statusCode} sin CDR.`);
           stillPending += ticketInvoices;
+          queryErrors += 1;
           await this.prisma.invoice.updateMany({
             where: { ticket },
             data: {
@@ -282,6 +286,7 @@ export class SummaryProcessorService {
         // No lanzamos: un ticket problemático no debe frenar a los demás.
         this.logger.error(`[ERROR] Consultando ticket ${ticket}: ${err?.message ?? err}`);
         stillPending += ticketInvoices;
+        queryErrors += 1;
         await this.prisma.invoice.updateMany({
           where: { ticket },
           data: {
@@ -292,7 +297,7 @@ export class SummaryProcessorService {
       }
     }
 
-    return { processedTickets: pendingTickets.length, resolvedInvoices, stillPending };
+    return { processedTickets: pendingTickets.length, resolvedInvoices, stillPending, queryErrors };
   }
 
   private toDate(d: Date): string {
