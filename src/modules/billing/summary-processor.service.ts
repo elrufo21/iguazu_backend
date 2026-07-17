@@ -220,6 +220,7 @@ export class SummaryProcessorService {
     let stillPending = 0;
     for (const row of pendingTickets) {
       const ticket = row.ticket!;
+      const ticketInvoices = await this.prisma.invoice.count({ where: { ticket } });
       try {
         const status = await this.sunat.getStatus(ticket);
         this.logger.log(
@@ -228,13 +229,21 @@ export class SummaryProcessorService {
 
         if (status.statusCode === '98') {
           // Sigue en proceso. Nada que actualizar (summaryStatus ya es '98').
-          stillPending += await this.prisma.invoice.count({ where: { ticket } });
+          stillPending += ticketInvoices;
           continue;
         }
 
         // '0' (aceptado) o '99' (rechazo): viene con CDR.
         if (!status.cdrBase64) {
           this.logger.warn(`Ticket ${ticket}: statusCode ${status.statusCode} sin CDR.`);
+          stillPending += ticketInvoices;
+          await this.prisma.invoice.updateMany({
+            where: { ticket },
+            data: {
+              statusConsultas: { increment: 1 },
+              sunatDescription: `Consulta SUNAT sin CDR (status ${status.statusCode}).`,
+            },
+          });
           continue;
         }
 
@@ -272,6 +281,14 @@ export class SummaryProcessorService {
       } catch (err: any) {
         // No lanzamos: un ticket problemático no debe frenar a los demás.
         this.logger.error(`[ERROR] Consultando ticket ${ticket}: ${err?.message ?? err}`);
+        stillPending += ticketInvoices;
+        await this.prisma.invoice.updateMany({
+          where: { ticket },
+          data: {
+            statusConsultas: { increment: 1 },
+            sunatDescription: `Consulta SUNAT pendiente: ${err?.message ?? err}`,
+          },
+        });
       }
     }
 
