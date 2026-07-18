@@ -58,6 +58,13 @@ function parseSoapBody(xmlLike: string): any | null {
   }
 }
 
+function maskSoap(value?: string): string | undefined {
+  if (!value) return value;
+  return value
+    .replace(/<wsse:Password>[\s\S]*?<\/wsse:Password>/g, '<wsse:Password>***</wsse:Password>')
+    .replace(/<contentFile>[\s\S]*?<\/contentFile>/g, '<contentFile>***</contentFile>');
+}
+
 /**
  * Construye el envelope SOAP con WS-Security UsernameToken en el Header.
  * El manual (pág. 13) exige el modelo UsernameToken con RUC+usuario en <wsse:Username>
@@ -419,7 +426,7 @@ export class SunatService {
               : undefined,
           }
         : {}),
-      soapRequest: env?.soapRequest,
+      soapRequest: maskSoap(env?.soapRequest),
       soapResponse: input.soapResponse,
       httpStatus: input.httpStatus,
       httpStatusText: input.httpStatusText,

@@ -6,7 +6,7 @@ import { InvoiceStatus, SaleStatus } from '@prisma/client';
 import { BillingService } from './billing.service';
 
 describe('BillingService', () => {
-  it('sends boletas individually with sendBill', async () => {
+  it('sends boletas through the daily summary', async () => {
     const prisma = {
       sale: {
         findUnique: jest.fn().mockResolvedValue({
@@ -39,8 +39,17 @@ describe('BillingService', () => {
       }),
       update: jest.fn(),
     };
-    const sunat = { sendBill: jest.fn().mockResolvedValue({ cdrBase64: 'cdr' }) };
-    const summaryProcessor = { sendDailySummary: jest.fn() };
+    const sunat = { sendBill: jest.fn() };
+    const summaryProcessor = {
+      sendDailySummary: jest.fn().mockResolvedValue({
+        includedCount: 1,
+        correlativo: 1,
+        summaryFileName: '10415464211-RC-20260717-1',
+        ticket: '123',
+        summaryStatus: '98',
+        summaryError: null,
+      }),
+    };
     const service = new BillingService(
       prisma as any,
       config() as any,
@@ -57,17 +66,11 @@ describe('BillingService', () => {
 
     const result = await service.issueFromSale(43, { invoiceType: '03' }, 1);
 
-    expect(sunat.sendBill).toHaveBeenCalledWith('zip', '10415464211-03-B001-00000001');
-    expect(summaryProcessor.sendDailySummary).not.toHaveBeenCalled();
-    expect(invoices.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        invoiceType: '03',
-        status: InvoiceStatus.ACCEPTED,
-        ticket: null,
-        summaryStatus: null,
-      }),
-    );
-    expect(result.status).toBe(InvoiceStatus.ACCEPTED);
+    expect(sunat.sendBill).not.toHaveBeenCalled();
+    expect(summaryProcessor.sendDailySummary).toHaveBeenCalled();
+    expect(result.status).toBe(InvoiceStatus.PENDING);
+    expect(result.ticket).toBe('123');
+    expect(result.summaryStatus).toBe('98');
   });
 });
 
