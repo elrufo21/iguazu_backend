@@ -21,6 +21,7 @@ export const AVAILABLE_PERMISSIONS = [
   'GET /cash-movements',
   'GET /cash-movements/by-shift/:cashShiftId',
   'GET /cash-movements/:id',
+  'POST /cash-movements/income',
   'POST /cash-movements/expense',
   'POST /cash-movements/:id/reverse',
   'POST /cash-shift/open',

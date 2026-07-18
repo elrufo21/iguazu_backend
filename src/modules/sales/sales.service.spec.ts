@@ -13,6 +13,50 @@ import {
 import { SalesService } from './sales.service';
 
 describe('SalesService', () => {
+  it('counts stay payments from other users in the room account', async () => {
+    const prisma = {
+      stay: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 5,
+          agreedPrice: 40,
+          room: { roomProducts: [] },
+        }),
+      },
+      sale: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 70,
+            status: SaleStatus.PAID,
+            total: 40,
+            details: [
+              { itemType: SaleItemType.ROOM_RENT, stayId: 5, subtotal: 40 },
+            ],
+          },
+        ]),
+      },
+    };
+    const service = new SalesService(prisma as any, {} as any);
+
+    const account = await service.accountByStay(5, { sub: 99, role: UserRole.CASHIER });
+
+    expect(prisma.sale.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { stayId: 5 },
+            {
+              details: {
+                some: { stayId: 5 },
+              },
+            },
+          ],
+        }),
+      }),
+    );
+    expect(account.lodging.pendingAmount).toBe(0);
+    expect(account.totals.amountToCollect).toBe(0);
+  });
+
   it('cancels a paid sale in the sale cash shift, not the current open shift', async () => {
     const sale = {
       id: 71,

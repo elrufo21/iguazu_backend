@@ -27,7 +27,7 @@ const stayInclude = {
   reservation: true,
   cashShift: true,
   sales: {
-    where: { status: SaleStatus.OPEN },
+    where: { status: { not: SaleStatus.CANCELLED } },
     include: {
       details: { include: { product: true } },
       payments: true,
@@ -279,19 +279,21 @@ export class StaysService {
     });
   }
 
-  active() {
-    return this.prisma.stay.findMany({
+  async active() {
+    const stays = await this.prisma.stay.findMany({
       where: { status: StayStatus.ACTIVE },
       orderBy: { checkIn: 'desc' },
       include: stayInclude,
     });
+    return this.withAccountSales(stays);
   }
 
-  history() {
-    return this.prisma.stay.findMany({
+  async history() {
+    const stays = await this.prisma.stay.findMany({
       orderBy: { checkIn: 'desc' },
       include: stayInclude,
     });
+    return this.withAccountSales(stays);
   }
 
   async findOne(id: number) {
@@ -300,7 +302,38 @@ export class StaysService {
       include: stayInclude,
     });
     if (!stay) throw new NotFoundException('Estadía no encontrada.');
-    return stay;
+    return (await this.withAccountSales([stay]))[0];
+  }
+
+  private async withAccountSales<T extends { id: number; sales?: any[] }>(stays: T[]) {
+    const stayIds = stays.map((stay) => stay.id);
+    if (!stayIds.length) return stays;
+    const sales = await this.prisma.sale.findMany({
+      where: {
+        status: { not: SaleStatus.CANCELLED },
+        OR: [
+          { stayId: { in: stayIds } },
+          { details: { some: { stayId: { in: stayIds } } } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      include: {
+        details: { include: { product: true } },
+        payments: true,
+      },
+    });
+    const salesByStayId = new Map<number, any[]>();
+    for (const sale of sales) {
+      const ids = new Set<number>();
+      if (sale.stayId && stayIds.includes(sale.stayId)) ids.add(sale.stayId);
+      for (const detail of sale.details) {
+        if (detail.stayId && stayIds.includes(detail.stayId)) ids.add(detail.stayId);
+      }
+      for (const id of ids) {
+        salesByStayId.set(id, [...(salesByStayId.get(id) ?? []), sale]);
+      }
+    }
+    return stays.map((stay) => ({ ...stay, sales: salesByStayId.get(stay.id) ?? [] }));
   }
 
   private async openShiftFor(user: AuthUser, cashShiftId?: number) {

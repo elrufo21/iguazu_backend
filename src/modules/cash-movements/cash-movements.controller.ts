@@ -43,6 +43,11 @@ export class CashMovementsController {
     return this.cashMovementsService.expense(dto, user);
   }
 
+  @Post('income')
+  income(@Body() dto: CreateCashExpenseDto, @CurrentUser() user: any) {
+    return this.cashMovementsService.income(dto, user);
+  }
+
   @Post(':id/reverse')
   reverse(
     @Param('id', ParseIntPipe) id: number,

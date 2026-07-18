@@ -81,11 +81,11 @@ export class CashMovementsService {
       },
     });
 
-    if (data.type === CashMovementType.EXPENSE) {
+    if (data.referenceType === 'MANUAL') {
       await db.auditLog.create({
         data: {
           userId: data.userId,
-          action: 'CASH_EXPENSE',
+          action: data.type === CashMovementType.EXPENSE ? 'CASH_EXPENSE' : 'CASH_INCOME',
           entity: 'CashMovement',
           entityId: movement.id,
           newData: movement,
@@ -209,6 +209,24 @@ export class CashMovementsService {
       }
 
       return movement;
+    });
+  }
+
+  async income(dto: CreateCashExpenseDto, user: AuthUser) {
+    if (dto.category !== CashMovementCategory.CASH_ADJUSTMENT) {
+      throw new BadRequestException('Categoría de ingreso no permitida.');
+    }
+
+    return this.record({
+      cashShiftId: dto.cashShiftId,
+      userId: this.userId(user),
+      actorRole: user.role,
+      type: CashMovementType.INCOME,
+      category: dto.category,
+      amount: dto.amount,
+      paymentMethod: dto.paymentMethod,
+      description: dto.description,
+      referenceType: 'MANUAL',
     });
   }
 

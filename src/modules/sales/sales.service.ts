@@ -792,16 +792,21 @@ export class SalesService {
             },
           },
         },
-        sales: {
-          where: user.role === UserRole.ADMIN ? undefined : { userId: user.sub },
-          orderBy: { createdAt: 'desc' },
-          include: saleInclude,
-        },
       },
     });
     if (!stay) throw new NotFoundException('Estadía no encontrada.');
 
-    const sales = stay.sales;
+    const sales = await this.prisma.sale.findMany({
+      where: {
+        status: { not: SaleStatus.CANCELLED },
+        OR: [
+          { stayId },
+          { details: { some: { stayId } } },
+        ],
+      },
+      orderBy: { createdAt: 'desc' },
+      include: saleInclude,
+    });
     const pendingCharges = sales.filter(
       (sale) => sale.status === SaleStatus.OPEN,
     );
