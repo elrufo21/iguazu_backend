@@ -2,7 +2,7 @@ jest.mock('src/prisma/prisma.service', () => ({ PrismaService: class {} }), {
   virtual: true,
 });
 
-import { InvoiceStatus, SaleStatus } from '@prisma/client';
+import { InvoiceStatus, SaleItemType, SaleStatus } from '@prisma/client';
 import { BillingService } from './billing.service';
 
 describe('BillingService', () => {
@@ -22,7 +22,8 @@ describe('BillingService', () => {
           invoice: null,
           details: [
             {
-              description: 'Alojamiento Hab. 215',
+              itemType: SaleItemType.ROOM_RENT,
+              description: '',
               quantity: 1,
               unitPrice: 50,
               subtotal: 50,
@@ -40,6 +41,7 @@ describe('BillingService', () => {
       update: jest.fn(),
     };
     const sunat = { sendBill: jest.fn() };
+    const pdf = { generate: jest.fn().mockResolvedValue('pdf') };
     const summaryProcessor = {
       sendDailySummary: jest.fn().mockResolvedValue({
         includedCount: 1,
@@ -59,7 +61,7 @@ describe('BillingService', () => {
       { makeZipBase64: jest.fn().mockReturnValue('zip') } as any,
       sunat as any,
       { unzip: jest.fn().mockReturnValue({ responseCode: '0', description: 'Aceptado', xmlContent: '<DigestValue>abc</DigestValue>' }) } as any,
-      { generate: jest.fn().mockResolvedValue('pdf') } as any,
+      pdf as any,
       {} as any,
       summaryProcessor as any,
     );
@@ -71,6 +73,13 @@ describe('BillingService', () => {
     expect(result.status).toBe(InvoiceStatus.PENDING);
     expect(result.ticket).toBe('123');
     expect(result.summaryStatus).toBe('98');
+    expect(pdf.generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        items: [
+          expect.objectContaining({ description: 'Servicio de alojamiento' }),
+        ],
+      }),
+    );
   });
 });
 
@@ -90,7 +99,7 @@ function config() {
         cityName: 'HUANCAYO',
         countrySubentity: 'JUNIN',
         district: 'HUANCAYO',
-        line: '-',
+        line: 'CALLE OCHO DE OCTUBRE 123',
         countryCode: 'PE',
       },
     },

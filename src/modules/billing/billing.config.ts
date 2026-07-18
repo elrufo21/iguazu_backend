@@ -41,7 +41,13 @@ export class BillingConfig {
   }
 
   get direccion(): string {
-    return this.config.get<string>('SUNAT_DIRECCION') ?? '-';
+    const direccion = this.config.get<string>('SUNAT_DIRECCION')?.trim();
+    if (!direccion || direccion === '-') {
+      throw new Error(
+        'SUNAT_DIRECCION debe ser la direccion fiscal real del emisor, no "-".',
+      );
+    }
+    return direccion;
   }
 
   get ubigeo(): string {

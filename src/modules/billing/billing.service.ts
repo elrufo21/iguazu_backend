@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { InvoiceStatus } from '@prisma/client';
+import { InvoiceStatus, SaleItemType } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { BillingConfig } from './billing.config';
@@ -101,6 +101,7 @@ export class BillingService {
     const total = Number(sale.total);
     const taxableAmount = Number((total / IGV_FACTOR).toFixed(2));
     const taxAmount = Number((total - taxableAmount).toFixed(2));
+    const details = this.billingDetails(sale.details);
 
     // Construir payload para el XML.
     const data = this.buildComprobanteData({
@@ -113,7 +114,7 @@ export class BillingService {
       total,
       customer: sale.customer,
       customerDocType,
-      details: sale.details,
+      details,
     });
 
     // Bifurcación del flujo SUNAT:
@@ -137,7 +138,7 @@ export class BillingService {
         customerDocType,
         customerDocNumber: documentNumber,
         customer: sale.customer,
-        details: sale.details,
+        details,
         retryInvoice,
       });
     }
@@ -194,7 +195,7 @@ export class BillingService {
           total,
           currency: 'PEN',
           hash: result.hash,
-          items: sale.details.map((d) => ({
+          items: details.map((d) => ({
             description: d.description,
             quantity: Number(d.quantity),
             unitPrice: Number(d.unitPrice),
@@ -741,6 +742,21 @@ export class BillingService {
         },
       })),
     };
+  }
+
+  private billingDetails(details: any[]) {
+    return details.map((detail) => ({
+      ...detail,
+      description:
+        detail.description?.trim() ||
+        (detail.itemType === SaleItemType.ROOM_RENT
+          ? 'Servicio de alojamiento'
+          : detail.itemType === SaleItemType.PENALTY
+            ? 'Penalidad'
+            : detail.itemType === SaleItemType.PRODUCT
+              ? 'Producto'
+              : 'Servicio'),
+    }));
   }
 
   private safeSunatRequest(nombreZip: string, data: ComprobanteData) {
