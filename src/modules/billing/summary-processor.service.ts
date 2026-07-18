@@ -91,8 +91,11 @@ export class SummaryProcessorService {
 
     // Bloque único (el hotel rara vez supera 500 boletas/día). Si las supera,
     // se envían en sucesivas llamadas (cada una toma su bloque de 500).
-    const block = pending.slice(0, SummaryProcessorService.MAX_LINES_PER_BLOCK);
-    const referenceDate = this.toDate(block[0].issueDate);
+    const firstReferenceDate = this.toDate(pending[0].issueDate);
+    const block = pending
+      .filter((inv) => this.toDate(inv.issueDate) === firstReferenceDate)
+      .slice(0, SummaryProcessorService.MAX_LINES_PER_BLOCK);
+    const referenceDate = firstReferenceDate;
     const issueDate = new Date();
     const correlativo = await this.invoices.nextCorrelativo('RC');
 
@@ -204,7 +207,7 @@ export class SummaryProcessorService {
         ticket: { not: null },
         summaryStatus: { in: ['98', 'error_envio'] },
       },
-      select: { ticket: true, summaryCorrelativo: true },
+      select: { ticket: true, summaryCorrelativo: true, summarySentAt: true },
       distinct: ['ticket'],
     });
 
@@ -222,9 +225,20 @@ export class SummaryProcessorService {
     let resolvedInvoices = 0;
     let stillPending = 0;
     let queryErrors = 0;
+    const minTicketAgeMs = this.config.summaryPollMs;
     for (const row of pendingTickets) {
       const ticket = row.ticket!;
       const ticketInvoices = await this.prisma.invoice.count({ where: { ticket } });
+      if (
+        row.summarySentAt &&
+        Date.now() - row.summarySentAt.getTime() < minTicketAgeMs
+      ) {
+        stillPending += ticketInvoices;
+        this.logger.log(
+          `[CONSULTA] Ticket ${ticket} aun reciente; se consultara despues.`,
+        );
+        continue;
+      }
       try {
         const status = await this.sunat.getStatus(ticket);
         this.logger.log(
